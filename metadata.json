@@ -1,0 +1,8 @@
+{
+  "name": "RaduniNordItalia",
+  "description": "Piattaforma dedicata alla sponsorizzazione e gestione di eventi automotive nel Nord Italia, con sezioni dedicate al carspotting e al calendario eventi.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}

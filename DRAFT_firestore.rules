@@ -1,0 +1,135 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    
+    function incoming() {
+      return request.resource.data;
+    }
+    
+    function existing() {
+      return resource.data;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function isOrganizer() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'organizer' || 
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+
+    // --- Validation Blueprints ---
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'username', 'email', 'role']) &&
+             data.keys().size() <= 7 &&
+             data.id == request.auth.uid &&
+             data.username is string && data.username.size() >= 3 && data.username.size() <= 32 &&
+             data.email is string && data.email.size() <= 256 &&
+             data.role in ['user', 'organizer', 'admin'] &&
+             (data.get('following', []) is list);
+    }
+
+    function isValidSpot(data) {
+      return data.keys().hasAll(['car_model', 'spotted_by', 'image_data', 'created_at']) &&
+             data.keys().size() <= 10 &&
+             data.car_model is string && data.car_model.size() <= 100 &&
+             data.spotted_by is string && data.spotted_by.size() <= 32 &&
+             data.image_data is string && data.image_data.size() <= 1048576 && // 1MB limit check
+             data.created_at is string; // Frontend uses ISO string, ideally we'd check request.time if using Timestamp
+    }
+
+    function isValidEvent(data) {
+      return data.keys().hasAll(['title', 'start_date', 'start_time', 'address', 'created_by']) &&
+             data.keys().size() <= 25 &&
+             data.title is string && data.title.size() <= 200 &&
+             data.address is string && data.address.size() <= 500 &&
+             data.created_by == request.auth.uid;
+    }
+
+    // --- Collection Routes ---
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && (
+        // Enforce secure list queries: must search by exact username or be the same user
+        resource.data.id == request.auth.uid || 
+        (request.query.limit <= 20)
+      );
+      
+      allow create: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && isValidUser(incoming()) && (
+        incoming().role == 'user' // Default to user on creation for regular flows
+      );
+      
+      allow update: if (isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && (
+        // Action: Update Profile (Self)
+        (incoming().diff(existing()).affectedKeys().hasOnly(['username', 'following'])) || 
+        isAdmin()
+      )) || (isAdmin() && isValidUser(incoming()));
+      
+      allow delete: if isAdmin();
+    }
+
+    match /spots/{spotId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(spotId) && isValidSpot(incoming());
+      
+      allow update: if (
+        isSignedIn() && isValidId(spotId) && isValidSpot(incoming()) && (
+          (existing().spotted_by_id == request.auth.uid) || // Assuming we added spotted_by_id for security
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.username == existing().spotted_by) ||
+          isAdmin()
+        )
+      );
+      
+      allow delete: if (
+        isSignedIn() && (
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.username == existing().spotted_by) || 
+          isAdmin()
+        )
+      );
+    }
+
+    match /events/{eventId} {
+      allow read: if isSignedIn();
+      allow create: if isOrganizer() && isValidId(eventId) && isValidEvent(incoming());
+      
+      allow update: if (
+        isSignedIn() && isValidId(eventId) && isValidEvent(incoming()) && (
+          (existing().created_by == request.auth.uid) || 
+          isAdmin()
+        )
+      );
+      
+      allow delete: if (
+        isSignedIn() && (
+          (existing().created_by == request.auth.uid) || 
+          isAdmin()
+        )
+      );
+    }
+  }
+}

@@ -1,0 +1,145 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isVerified() {
+      // Temporarily relaxing to just isSignedIn() for better UX if email verification flow isn't forced yet
+      // but keeping the function name for future strictness if needed.
+      return isSignedIn();
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    
+    function incoming() {
+      return request.resource.data;
+    }
+    
+    function existing() {
+      return resource.data;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isSystemAdmin() {
+      // Bootstrapped admin email
+      return isVerified() && (
+        request.auth.token.email == 'pianegonda.mattia2010@gmail.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isOrganizer() {
+      return isVerified() && (
+        isSystemAdmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'organizer')
+      );
+    }
+
+    // --- Validation Blueprints ---
+
+    function isValidUser(data, userId) {
+      return data.keys().hasAll(['id', 'username', 'email', 'role']) &&
+             data.keys().size() <= 10 &&
+             data.id == userId &&
+             data.username is string && data.username.size() >= 3 && data.username.size() <= 32 &&
+             data.email is string && data.email.size() <= 256 &&
+             data.role in ['user', 'organizer', 'admin'];
+    }
+
+    function isValidSpot(data, creatorUsername) {
+      return data.keys().hasAll(['car_model', 'spotted_by', 'image_data', 'created_at']) &&
+             data.keys().size() <= 10 &&
+             data.car_model is string && data.car_model.size() <= 100 &&
+             data.spotted_by == creatorUsername &&
+             data.image_data is string && data.image_data.size() <= 1048576 &&
+             data.created_at is string;
+    }
+
+    function isValidEvent(data, creatorId) {
+      return data.keys().hasAll(['title', 'start_date', 'start_time', 'address', 'created_by']) &&
+             data.keys().size() <= 25 &&
+             data.title is string && data.title.size() <= 200 &&
+             data.address is string && data.address.size() <= 500 &&
+             data.created_by == creatorId;
+    }
+
+    // --- Collection Routes ---
+
+    match /users/{userId} {
+      allow get: if true; // Allow public read for profile display and login/register lookup
+      allow list: if true; // Allow public list for search and login/register lookup
+      
+      allow create: if isVerified() && isValidId(userId) && userId == request.auth.uid && isValidUser(incoming(), userId) && (
+        incoming().role == 'user' || (request.auth.token.email == 'pianegonda.mattia2010@gmail.com' && incoming().role == 'admin')
+      );
+      
+      allow update: if (isValidId(userId) && (
+        // Regular user update
+        (isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['username', 'following']) && isValidUser(incoming(), userId)) ||
+        // Admin update
+        (isSystemAdmin() && isValidUser(incoming(), userId))
+      ));
+      
+      allow delete: if isSystemAdmin();
+    }
+
+    match /spots/{spotId} {
+      allow read: if true; // Publicly readable
+      allow list: if true; // Publicly listable
+      
+      allow create: if isVerified() && isValidId(spotId) && (
+        isValidSpot(incoming(), get(/databases/$(database)/documents/users/$(request.auth.uid)).data.username)
+      );
+      
+      allow update: if (
+        isVerified() && isValidId(spotId) && (
+          (existing().spotted_by == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.username && 
+           incoming().diff(existing()).affectedKeys().hasOnly(['car_model', 'location', 'location_data']) && isValidSpot(incoming(), existing().spotted_by)) ||
+          (isSystemAdmin() && isValidSpot(incoming(), existing().spotted_by))
+        )
+      );
+      
+      allow delete: if isVerified() && (
+        existing().spotted_by == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.username || 
+        isSystemAdmin()
+      );
+    }
+
+    match /events/{eventId} {
+      allow read: if true; // Publicly readable
+      allow list: if true; // Publicly listable
+      
+      allow create: if isOrganizer() && isValidId(eventId) && isValidEvent(incoming(), request.auth.uid);
+      
+      allow update: if (
+        isVerified() && isValidId(eventId) && (
+          (existing().created_by == request.auth.uid && isValidEvent(incoming(), existing().created_by)) || 
+          (isSystemAdmin() && isValidEvent(incoming(), existing().created_by))
+        )
+      );
+      
+      allow delete: if isVerified() && (
+        existing().created_by == request.auth.uid || 
+        isSystemAdmin()
+      );
+    }
+  }
+}

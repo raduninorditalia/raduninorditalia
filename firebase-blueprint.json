@@ -1,0 +1,82 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier (UID)" },
+        "username": { "type": "string", "description": "Unique display name" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["user", "organizer", "admin"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "following": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["id", "username", "email", "role"]
+    },
+    "Spot": {
+      "title": "Spot",
+      "description": "Information about a car spotting",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "car_model": { "type": "string" },
+        "location": { "type": "string" },
+        "location_data": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" },
+            "address": { "type": "string" }
+          }
+        },
+        "spotted_by": { "type": "string", "description": "Username of the spotter" },
+        "image_data": { "type": "string", "description": "Base64 image data" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["car_model", "spotted_by", "image_data", "created_at"]
+    },
+    "Event": {
+      "title": "Event",
+      "description": "Automotive event details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "start_date": { "type": "string" },
+        "start_time": { "type": "string" },
+        "end_date": { "type": "string" },
+        "end_time": { "type": "string" },
+        "address": { "type": "string" },
+        "maps_link": { "type": "string" },
+        "instagram_post_link": { "type": "string" },
+        "is_dynamic": { "type": "boolean" },
+        "paid_visitors": { "type": "boolean" },
+        "paid_exhibitors": { "type": "boolean" },
+        "reg_at_entrance_visitors": { "type": "boolean" },
+        "reg_at_entrance_exhibitors": { "type": "boolean" },
+        "reg_link_visitors": { "type": "string" },
+        "reg_link_exhibitors": { "type": "string" },
+        "description": { "type": "string" },
+        "poster_url": { "type": "string" },
+        "created_by": { "type": "string", "description": "UID of the creator" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "start_date", "start_time", "address", "created_by"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Profiles for all users"
+    },
+    "spots/{spotId}": {
+      "schema": "Spot",
+      "description": "All shared car spots"
+    },
+    "events/{eventId}": {
+      "schema": "Event",
+      "description": "All automotive events"
+    }
+  }
+}
