@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Script di Deploy locali
+deploy.bat
+update.sh
